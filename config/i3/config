@@ -290,15 +290,8 @@ exec --no-startup-id /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1
 exec --no-startup-id libinput-gestures-setup start
 
 #Screenshoter
-bindsym --release Shift+Print exec --no-startup-id sh $HOME/.config/i3/screenshot.sh partial
-bindsym --release Ctrl+Shift+Print exec --no-startup-id sh $HOME/.config/i3/screenshot.sh partial clipboard
-
-bindsym --release Print exec --no-startup-id sh $HOME/.config/i3/screenshot.sh full
-bindsym --release Ctrl+Print exec --no-startup-id sh $HOME/.config/i3/screenshot.sh full clipboard
-
-bindsym --release Mod1+Print exec --no-startup-id sh $HOME/.config/i3/screenshot.sh current
-bindsym --release Ctrl+Mod1+Print exec --no-startup-id sh $HOME/.config/i3/screenshot.sh current clipboard
-
+bindsym Print       exec flameshot full
+bindsym Shift+Print exec flameshot gui
 #Polybar
 exec_always --no-startup-id sh $HOME/.config/polybar/launch.sh
 
@@ -311,4 +304,7 @@ gaps inner 5
 gaps outer 5
 smart_gaps on
 bindsym $mod+Shift+x exec i3lock -i /home/lads/Wallpapers/ScreenSaver.png
+
+exec_always --no-startup-id feh --bg-scale ~/Pictures/wallpaper.jpg
+exec_always --no-startup-id compton
 

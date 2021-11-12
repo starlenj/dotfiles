@@ -177,7 +177,7 @@ format-connected-padding = 2
 format-connected-foreground = ${colors.menucol-green}
 format-connected-underline = ${colors.menucol-green}
 
-format-disconnected = " "
+label-disconnected = " "
 format-disconnected-font = 7
 format-disconnected-padding = 2
 format-disconnected-foreground = ${colors.menucol-yellow}
