@@ -7,16 +7,24 @@ set -euo pipefail
 REPO_SSH="git@github.com:starlenj/dotfiles.git"
 DOTDIR="$HOME/dotfiles"
 
-# Repo içindeki dosya isimleri (gerekirse değiştir)
-REPO_ZSHRC_REL="zshrc"       # örn: ".zshrc" ise bunu değiştir
-REPO_TMUX_REL="tmux.conf"    # örn: ".tmux.conf" ise bunu değiştir
+REPO_ZSHRC_REL="zshrc"
+REPO_TMUX_REL="tmux.conf"
 
 # Neovim + LazyVim
 REQUIRED_NVIM_VERSION="0.11.2"
-NVIM_INSTALL_DIR="/opt/nvim"
-NVIM_TARBALL_URL="https://github.com/neovim/neovim/releases/latest/download/nvim-linux-x86_64.tar.gz"
+NVIM_INSTALL_DIR="/usr/local/nvim"
 NVIM_CONFIG_DIR="$HOME/.config/nvim"
 LAZYVIM_REPO="https://github.com/LazyVim/starter"
+
+# macOS arch detection
+ARCH="$(uname -m)"
+if [[ "$ARCH" == "arm64" ]]; then
+  NVIM_TARBALL_URL="https://github.com/neovim/neovim/releases/latest/download/nvim-macos-arm64.tar.gz"
+  NVIM_EXTRACTED_DIR="nvim-macos-arm64"
+else
+  NVIM_TARBALL_URL="https://github.com/neovim/neovim/releases/latest/download/nvim-macos-x86_64.tar.gz"
+  NVIM_EXTRACTED_DIR="nvim-macos-x86_64"
+fi
 
 # -----------------------------
 # Helpers
@@ -43,12 +51,26 @@ version_lt() {
 # -----------------------------
 # Steps
 # -----------------------------
-ensure_apt_packages() {
-  log "Installing required packages (apt)"
-  sudo apt-get update -y
-  sudo apt-get install -y \
-    git curl wget unzip ca-certificates \
-    zsh tmux
+ensure_homebrew_packages() {
+  log "Checking Homebrew"
+  if ! have brew; then
+    log "Installing Homebrew"
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+    # Homebrew PATH (Apple Silicon)
+    if [[ "$ARCH" == "arm64" ]]; then
+      eval "$(/opt/homebrew/bin/brew shellenv)"
+      if ! grep -qF 'brew shellenv' "$HOME/.zprofile" 2>/dev/null; then
+        echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> "$HOME/.zprofile"
+      fi
+    fi
+  else
+    log "Homebrew already installed"
+    brew update
+  fi
+
+  log "Installing required packages (brew)"
+  brew install git curl wget unzip zsh tmux
 }
 
 clone_or_pull_repo() {
@@ -80,36 +102,34 @@ replace_configs() {
   backup_path "$HOME/.zshrc"
   backup_path "$HOME/.tmux.conf"
 
-  cp -f "$repo_zsh" "$HOME/.zshrc"
+  cp -f "$repo_zsh"  "$HOME/.zshrc"
   cp -f "$repo_tmux" "$HOME/.tmux.conf"
 }
 
-# --- FIX: make zshrc portable (remove /home/<user> hardcodes) ---
 patch_zshrc_paths() {
   local z="$HOME/.zshrc"
   [[ -f "$z" ]] || return 0
 
-  log "Patching ~/.zshrc to be portable ($HOME-aware)"
+  log "Patching ~/.zshrc to be portable (\$HOME-aware)"
 
-  # 1) Any /home/<user>/.oh-my-zsh -> $HOME/.oh-my-zsh
-  #    (handles /home/starlenj, /home/neate, etc.)
-  sed -i -E 's|/home/[^/]+/\.oh-my-zsh|\$HOME/.oh-my-zsh|g' "$z"
+  # /home/<user> ve /Users/<user> -> $HOME
+  sed -i '' -E 's|/home/[^/]+/\.oh-my-zsh|\$HOME/.oh-my-zsh|g'  "$z"
+  sed -i '' -E 's|/Users/[^/]+/\.oh-my-zsh|\$HOME/.oh-my-zsh|g' "$z"
 
-  # 2) Force export ZSH=... to $HOME/.oh-my-zsh (handles quotes/no quotes)
   if grep -qE '^[[:space:]]*export[[:space:]]+ZSH=' "$z"; then
-    sed -i -E 's|^[[:space:]]*export[[:space:]]+ZSH=.*$|export ZSH="$HOME/.oh-my-zsh"|' "$z"
+    sed -i '' -E 's|^[[:space:]]*export[[:space:]]+ZSH=.*$|export ZSH="$HOME/.oh-my-zsh"|' "$z"
   fi
 
-  # 3) If ZSH not set at all, add it near top (safe default)
   if ! grep -qE '^[[:space:]]*export[[:space:]]+ZSH=' "$z"; then
-    # Add at the top (line 1)
-    sed -i '1iexport ZSH="$HOME/.oh-my-zsh"\n' "$z"
+    local tmp; tmp="$(mktemp)"
+    { echo 'export ZSH="$HOME/.oh-my-zsh"'; echo ''; cat "$z"; } > "$tmp"
+    mv "$tmp" "$z"
   fi
 
-  # 4) If it sources oh-my-zsh.sh using absolute path, normalize to $ZSH
-  sed -i -E 's|source[[:space:]]+["'\'']?\$HOME/\.oh-my-zsh/oh-my-zsh\.sh["'\'']?|source "$ZSH/oh-my-zsh.sh"|g' "$z"
-  sed -i -E 's|source[[:space:]]+["'\'']?\$ZSH/oh-my-zsh\.sh["'\'']?|source "$ZSH/oh-my-zsh.sh"|g' "$z"
-  sed -i -E 's|source[[:space:]]+["'\'']?/home/[^/]+/\.oh-my-zsh/oh-my-zsh\.sh["'\'']?|source "$ZSH/oh-my-zsh.sh"|g' "$z"
+  sed -i '' -E 's|source[[:space:]]+["'"'"']?\$HOME/\.oh-my-zsh/oh-my-zsh\.sh["'"'"']?|source "$ZSH/oh-my-zsh.sh"|g'          "$z"
+  sed -i '' -E 's|source[[:space:]]+["'"'"']?\$ZSH/oh-my-zsh\.sh["'"'"']?|source "$ZSH/oh-my-zsh.sh"|g'                        "$z"
+  sed -i '' -E 's|source[[:space:]]+["'"'"']?/home/[^/]+/\.oh-my-zsh/oh-my-zsh\.sh["'"'"']?|source "$ZSH/oh-my-zsh.sh"|g'     "$z"
+  sed -i '' -E 's|source[[:space:]]+["'"'"']?/Users/[^/]+/\.oh-my-zsh/oh-my-zsh\.sh["'"'"']?|source "$ZSH/oh-my-zsh.sh"|g'    "$z"
 }
 
 install_oh_my_zsh_and_plugins() {
@@ -117,6 +137,7 @@ install_oh_my_zsh_and_plugins() {
   export CHSH=no
   export KEEP_ZSHRC=yes
 
+  # --- Oh My Zsh ---
   if [[ ! -d "$HOME/.oh-my-zsh" ]]; then
     log "Installing Oh My Zsh"
     sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
@@ -126,36 +147,116 @@ install_oh_my_zsh_and_plugins() {
 
   local ZSH_CUSTOM="${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}"
 
-  log "Ensuring powerlevel10k is installed"
+  # --- Powerlevel10k ---
+  log "Ensuring powerlevel10k theme is installed"
   if [[ ! -d "$ZSH_CUSTOM/themes/powerlevel10k" ]]; then
     git clone --depth=1 https://github.com/romkatv/powerlevel10k.git \
       "$ZSH_CUSTOM/themes/powerlevel10k"
+    log "powerlevel10k cloned"
+  else
+    log "powerlevel10k already present — pulling latest"
+    git -C "$ZSH_CUSTOM/themes/powerlevel10k" pull --ff-only || true
   fi
 
+  # ZSH_THEME'yi powerlevel10k olarak ayarla
+  local z="$HOME/.zshrc"
+  if grep -qE '^[[:space:]]*ZSH_THEME=' "$z"; then
+    sed -i '' -E 's|^[[:space:]]*ZSH_THEME=.*$|ZSH_THEME="powerlevel10k/powerlevel10k"|' "$z"
+    log "ZSH_THEME -> powerlevel10k/powerlevel10k"
+  else
+    echo '' >> "$z"
+    echo 'ZSH_THEME="powerlevel10k/powerlevel10k"' >> "$z"
+    log "ZSH_THEME appended to ~/.zshrc"
+  fi
+
+  # p10k instant prompt (en üste ekle)
+  if ! grep -qF 'p10k-instant-prompt' "$z"; then
+    local tmp; tmp="$(mktemp)"
+    cat > "$tmp" <<'BLOCK'
+# Enable Powerlevel10k instant prompt. Should stay close to the top of ~/.zshrc.
+if [[ -r "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh" ]]; then
+  source "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh"
+fi
+
+BLOCK
+    cat "$z" >> "$tmp"
+    mv "$tmp" "$z"
+    log "p10k instant prompt block added to top of ~/.zshrc"
+  fi
+
+  # p10k config source satırı
+  if ! grep -qF 'p10k.zsh' "$z"; then
+    echo '' >> "$z"
+    echo '# To customize prompt, run `p10k configure` or edit ~/.p10k.zsh.' >> "$z"
+    echo '[[ ! -f ~/.p10k.zsh ]] || source ~/.p10k.zsh' >> "$z"
+    log "p10k source line added to ~/.zshrc"
+  fi
+
+  # --- zsh-autosuggestions ---
   log "Ensuring zsh-autosuggestions is installed"
   if [[ ! -d "$ZSH_CUSTOM/plugins/zsh-autosuggestions" ]]; then
     git clone --depth=1 https://github.com/zsh-users/zsh-autosuggestions \
       "$ZSH_CUSTOM/plugins/zsh-autosuggestions"
+  else
+    git -C "$ZSH_CUSTOM/plugins/zsh-autosuggestions" pull --ff-only || true
+  fi
+
+  # --- zsh-syntax-highlighting ---
+  log "Ensuring zsh-syntax-highlighting is installed"
+  if [[ ! -d "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting" ]]; then
+    git clone --depth=1 https://github.com/zsh-users/zsh-syntax-highlighting \
+      "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting"
+  else
+    git -C "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting" pull --ff-only || true
   fi
 }
 
 install_tpm_and_tmux_plugins() {
-  log "Installing TPM"
+  log "Installing TPM (Tmux Plugin Manager)"
   local TPM_DIR="$HOME/.tmux/plugins/tpm"
+
   if [[ ! -d "$TPM_DIR" ]]; then
     git clone --depth=1 https://github.com/tmux-plugins/tpm "$TPM_DIR"
+    log "TPM cloned to $TPM_DIR"
+  else
+    log "TPM already present — pulling latest"
+    git -C "$TPM_DIR" pull --ff-only || true
   fi
 
-  log "Installing tmux plugins (best effort)"
+  # ~/.tmux.conf'ta TPM source satırı yoksa ekle
+  local tc="$HOME/.tmux.conf"
+  if [[ -f "$tc" ]] && ! grep -qF 'tpm/tpm' "$tc"; then
+    log "Adding TPM source lines to ~/.tmux.conf"
+    cat >> "$tc" <<'TMUX'
+
+# TPM - Tmux Plugin Manager
+set -g @plugin 'tmux-plugins/tpm'
+set -g @plugin 'tmux-plugins/tmux-sensible'
+
+# Initialize TPM (keep this line at the very bottom of tmux.conf)
+run '~/.tmux/plugins/tpm/tpm'
+TMUX
+  fi
+
+  log "Installing tmux plugins via TPM (best effort)"
   tmux start-server || true
   "$TPM_DIR/bin/install_plugins" || true
   "$TPM_DIR/bin/update_plugins" all || true
 }
 
 set_default_shell_zsh() {
-  log "Setting zsh as default shell (best effort)"
-  if [[ "${SHELL:-}" != "$(command -v zsh)" ]]; then
-    chsh -s "$(command -v zsh)" "$USER" || true
+  log "Setting zsh as default shell"
+  local zsh_path
+  zsh_path="$(command -v zsh)"
+
+  # macOS: /etc/shells listesine ekle (gerekirse)
+  if ! grep -qF "$zsh_path" /etc/shells; then
+    log "Adding $zsh_path to /etc/shells"
+    echo "$zsh_path" | sudo tee -a /etc/shells
+  fi
+
+  if [[ "${SHELL:-}" != "$zsh_path" ]]; then
+    chsh -s "$zsh_path" "$USER" || true
   fi
 }
 
@@ -175,7 +276,7 @@ install_or_update_neovim() {
     warn "Neovim not found; installing via official release"
   fi
 
-  sudo apt-get remove -y neovim 2>/dev/null || true
+  brew uninstall neovim 2>/dev/null || true
 
   local tmpdir
   tmpdir="$(mktemp -d)"
@@ -185,29 +286,30 @@ install_or_update_neovim() {
 
   log "Extracting"
   tar -xzf "$tmpdir/nvim.tar.gz" -C "$tmpdir"
+  xattr -cr "$tmpdir/$NVIM_EXTRACTED_DIR" 2>/dev/null || true
 
-  if [[ ! -d "$tmpdir/nvim-linux-x86_64" ]]; then
+  if [[ ! -d "$tmpdir/$NVIM_EXTRACTED_DIR" ]]; then
     rm -rf "$tmpdir"
-    warn "Unexpected archive layout; cannot find nvim-linux-x86_64"
+    warn "Unexpected archive layout; cannot find $NVIM_EXTRACTED_DIR"
     exit 1
   fi
 
   log "Installing to $NVIM_INSTALL_DIR (sudo)"
   sudo rm -rf "$NVIM_INSTALL_DIR"
-  sudo mv "$tmpdir/nvim-linux-x86_64" "$NVIM_INSTALL_DIR"
-
+  sudo mv "$tmpdir/$NVIM_EXTRACTED_DIR" "$NVIM_INSTALL_DIR"
   rm -rf "$tmpdir"
 
   log "Creating symlink /usr/local/bin/nvim -> $NVIM_INSTALL_DIR/bin/nvim"
   sudo mkdir -p /usr/local/bin
   sudo ln -sfn "$NVIM_INSTALL_DIR/bin/nvim" /usr/local/bin/nvim
 
-  # Also add PATH to .zshrc as fallback
   if ! grep -qF "$NVIM_INSTALL_DIR/bin" "$HOME/.zshrc"; then
     log "Adding Neovim PATH to ~/.zshrc"
-    echo "" >> "$HOME/.zshrc"
-    echo "# Neovim (installed by bootstrap)" >> "$HOME/.zshrc"
-    echo "export PATH=\"$NVIM_INSTALL_DIR/bin:\$PATH\"" >> "$HOME/.zshrc"
+    {
+      echo ""
+      echo "# Neovim (installed by bootstrap)"
+      echo "export PATH=\"$NVIM_INSTALL_DIR/bin:\$PATH\""
+    } >> "$HOME/.zshrc"
   fi
 
   log "Neovim installed:"
@@ -241,27 +343,32 @@ install_lazyvim_last() {
   echo "Tip: first run: nvim  (plugins will auto-install)"
 }
 
+# -----------------------------
+# Main
+# -----------------------------
 main() {
-  ensure_apt_packages
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    warn "Bu script macOS için tasarlanmıştır. Çıkılıyor."
+    exit 1
+  fi
+
+  ensure_homebrew_packages
   clone_or_pull_repo
   replace_configs
-
-  # Fix: repo zshrc hardcode paths -> portable
   patch_zshrc_paths
-
   install_oh_my_zsh_and_plugins
   install_tpm_and_tmux_plugins
   set_default_shell_zsh
-
   install_or_update_neovim
   install_lazyvim_last
 
-  log "Done."
-  echo "Next:"
-  echo "  - Yeni shell oturumu için: exec zsh -l"
-  echo "  - p10k gerekirse: p10k configure"
-  echo "  - tmux pluginleri gelmediyse: tmux -> prefix + I"
-  echo "  - LazyVim: nvim"
+  log "✅ Done!"
+  echo ""
+  echo "Next steps:"
+  echo "  1. Yeni shell oturumu başlat  : exec zsh -l"
+  echo "  2. p10k wizard (otomatik gelir, gelmezse): p10k configure"
+  echo "  3. tmux pluginleri gelmediyse : tmux aç -> prefix + I"
+  echo "  4. LazyVim başlat             : nvim"
 }
 
 main "$@"
